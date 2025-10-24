@@ -1,0 +1,72 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# **Smart Electric Grid - Energy Forecasting (OPTIMIZED)**\n\n**Models:** ARIMA, MLP (Optimized), ANFIS (Enhanced)\n\n**Key Optimizations:**\n- PCA feature reduction (26 \u2192 12-15 features)\n- Improved MLP with deeper architecture\n- Enhanced ANFIS with <3% MAPE target\n- Unified metrics and comparison\n- Cyclical encoding for temporal features\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Global Imports and Configuration**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# =============================================================================\n# GLOBAL IMPORTS - All libraries in one place (eliminates repetition)\n# =============================================================================\n\n# Core libraries\nimport pandas as pd\nimport numpy as np\nimport warnings\nwarnings.filterwarnings('ignore')\n\n# Visualization\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nplt.style.use('seaborn-v0_8-darkgrid')\n\n# Machine Learning - Preprocessing\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.decomposition import PCA\n\n# Machine Learning - Models\nfrom sklearn.neural_network import MLPRegressor\nfrom sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score\n\n# Statistical models\nfrom statsmodels.tsa.stattools import adfuller\nfrom statsmodels.graphics.tsaplots import plot_acf, plot_pacf\nfrom statsmodels.tsa.arima.model import ARIMA\n\n# Utilities\nimport pickle\nfrom datetime import datetime, timedelta\nfrom sklearn.cluster import KMeans\nimport itertools\nimport time\n\n# =============================================================================\n# GLOBAL CONFIGURATION\n# =============================================================================\n\n# Set random seeds for reproducibility\nRANDOM_SEED = 42\nnp.random.seed(RANDOM_SEED)\n\n# Data split ratios\nTRAIN_RATIO = 0.70\nVAL_RATIO = 0.10\nTEST_RATIO = 0.20\n\n# PCA configuration\nN_PCA_COMPONENTS = 12  # Reduced from 26 features\n\n# Model configurations\nMLP_CONFIG = {\n    'max_iter': 1000,\n    'early_stopping': True,\n    'validation_fraction': 0.1,\n    'n_iter_no_change': 30,\n    'random_state': RANDOM_SEED\n}\n\nANFIS_CONFIG = {\n    'n_membership_functions': 2,  # Reduced for efficiency\n    'max_epochs': 300,  # Increased for better training\n    'learning_rate': 0.01,\n    'patience': 50\n}\n\nprint(\"\u2713 All imports loaded successfully\")\nprint(f\"\u2713 Random seed set to: {RANDOM_SEED}\")\nprint(f\"\u2713 PCA components: {N_PCA_COMPONENTS}\")\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Utility Functions (Unified Metrics & Plotting)**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# =============================================================================\n# UNIFIED METRIC CALCULATION FUNCTION (eliminates duplication across models)\n# =============================================================================\n\ndef calculate_metrics(y_true, y_pred, model_name=\"Model\"):\n    \"\"\"\n    Calculate comprehensive metrics for model evaluation\n\n    Parameters:\n    -----------\n    y_true : array-like\n        Actual values\n    y_pred : array-like\n        Predicted values\n    model_name : str\n        Name of the model for display\n\n    Returns:\n    --------\n    dict : Dictionary containing all metrics\n    \"\"\"\n    # Ensure arrays\n    y_true = np.array(y_true).flatten()\n    y_pred = np.array(y_pred).flatten()\n\n    # Calculate metrics\n    rmse = np.sqrt(mean_squared_error(y_true, y_pred))\n    mae = mean_absolute_error(y_true, y_pred)\n\n    # MAPE with safe division\n    mask = y_true != 0\n    mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100\n    mape = np.clip(mape, 0, 100)  # Clip to reasonable range\n\n    # R-squared\n    r2 = r2_score(y_true, y_pred)\n\n    # Print results\n    print(f\"\\n{'='*60}\")\n    print(f\"{model_name} - Performance Metrics\")\n    print(f\"{'='*60}\")\n    print(f\"RMSE (Root Mean Squared Error): {rmse:.2f} kW\")\n    print(f\"MAE  (Mean Absolute Error):     {mae:.2f} kW\")\n    print(f\"MAPE (Mean Absolute % Error):   {mape:.2f} %\")\n    print(f\"R\u00b2   (R-squared Score):         {r2:.4f}\")\n    print(f\"{'='*60}\")\n\n    return {\n        'RMSE': rmse,\n        'MAE': mae,\n        'MAPE': mape,\n        'R2': r2\n    }\n\n# =============================================================================\n# UNIFIED PLOTTING FUNCTION\n# =============================================================================\n\ndef plot_predictions(y_true, y_pred, model_name=\"Model\", save_path=None):\n    \"\"\"Create comprehensive prediction visualization\"\"\"\n\n    fig, axes = plt.subplots(2, 2, figsize=(15, 10))\n\n    # 1. Actual vs Predicted (Scatter)\n    axes[0, 0].scatter(y_true, y_pred, alpha=0.5)\n    axes[0, 0].plot([y_true.min(), y_true.max()],\n                     [y_true.min(), y_true.max()], 'r--', lw=2)\n    axes[0, 0].set_xlabel('Actual Load (kW)')\n    axes[0, 0].set_ylabel('Predicted Load (kW)')\n    axes[0, 0].set_title(f'{model_name}: Actual vs Predicted')\n    axes[0, 0].grid(True)\n\n    # 2. Time series comparison (first 200 points)\n    n_points = min(200, len(y_true))\n    axes[0, 1].plot(y_true[:n_points], label='Actual', linewidth=2)\n    axes[0, 1].plot(y_pred[:n_points], label='Predicted', linewidth=2, alpha=0.7)\n    axes[0, 1].set_xlabel('Time Index')\n    axes[0, 1].set_ylabel('Load (kW)')\n    axes[0, 1].set_title(f'{model_name}: Time Series Comparison')\n    axes[0, 1].legend()\n    axes[0, 1].grid(True)\n\n    # 3. Residuals\n    residuals = y_true - y_pred\n    axes[1, 0].scatter(range(len(residuals)), residuals, alpha=0.5)\n    axes[1, 0].axhline(y=0, color='r', linestyle='--', linewidth=2)\n    axes[1, 0].set_xlabel('Sample Index')\n    axes[1, 0].set_ylabel('Residual (kW)')\n    axes[1, 0].set_title(f'{model_name}: Residuals Plot')\n    axes[1, 0].grid(True)\n\n    # 4. Residual distribution\n    axes[1, 1].hist(residuals, bins=50, edgecolor='black')\n    axes[1, 1].axvline(x=0, color='r', linestyle='--', linewidth=2)\n    axes[1, 1].set_xlabel('Residual (kW)')\n    axes[1, 1].set_ylabel('Frequency')\n    axes[1, 1].set_title(f'{model_name}: Residual Distribution')\n    axes[1, 1].grid(True)\n\n    plt.tight_layout()\n    if save_path:\n        plt.savefig(save_path, dpi=150, bbox_inches='tight')\n    plt.show()\n\nprint(\"\u2713 Utility functions defined successfully\")\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Load Dataset**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# Load dataset (remove Google Colab dependency)\ntry:\n    from google.colab import files\n    uploaded = files.upload()\n    print(\"\u2713 File uploaded via Google Colab\")\nexcept:\n    print(\"\u2713 Running in local environment - Dataset.csv should be present\")\n\n# Load data\ndf = pd.read_csv('Dataset.csv')\nprint(f\"\\n\u2713 Dataset loaded successfully: {df.shape}\")\nprint(f\"  Rows: {df.shape[0]:,} | Columns: {df.shape[1]}\")\n"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.8.0"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}

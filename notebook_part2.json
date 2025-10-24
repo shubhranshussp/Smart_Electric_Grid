@@ -1,0 +1,104 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# **Smart Electric Grid - Energy Forecasting (OPTIMIZED)**\n\n**Models:** ARIMA, MLP (Optimized), ANFIS (Enhanced)\n\n**Key Optimizations:**\n- PCA feature reduction (26 \u2192 12-15 features)\n- Improved MLP with deeper architecture\n- Enhanced ANFIS with <3% MAPE target\n- Unified metrics and comparison\n- Cyclical encoding for temporal features\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Global Imports and Configuration**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# =============================================================================\n# GLOBAL IMPORTS - All libraries in one place (eliminates repetition)\n# =============================================================================\n\n# Core libraries\nimport pandas as pd\nimport numpy as np\nimport warnings\nwarnings.filterwarnings('ignore')\n\n# Visualization\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nplt.style.use('seaborn-v0_8-darkgrid')\n\n# Machine Learning - Preprocessing\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.decomposition import PCA\n\n# Machine Learning - Models\nfrom sklearn.neural_network import MLPRegressor\nfrom sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score\n\n# Statistical models\nfrom statsmodels.tsa.stattools import adfuller\nfrom statsmodels.graphics.tsaplots import plot_acf, plot_pacf\nfrom statsmodels.tsa.arima.model import ARIMA\n\n# Utilities\nimport pickle\nfrom datetime import datetime, timedelta\nfrom sklearn.cluster import KMeans\nimport itertools\nimport time\n\n# =============================================================================\n# GLOBAL CONFIGURATION\n# =============================================================================\n\n# Set random seeds for reproducibility\nRANDOM_SEED = 42\nnp.random.seed(RANDOM_SEED)\n\n# Data split ratios\nTRAIN_RATIO = 0.70\nVAL_RATIO = 0.10\nTEST_RATIO = 0.20\n\n# PCA configuration\nN_PCA_COMPONENTS = 12  # Reduced from 26 features\n\n# Model configurations\nMLP_CONFIG = {\n    'max_iter': 1000,\n    'early_stopping': True,\n    'validation_fraction': 0.1,\n    'n_iter_no_change': 30,\n    'random_state': RANDOM_SEED\n}\n\nANFIS_CONFIG = {\n    'n_membership_functions': 2,  # Reduced for efficiency\n    'max_epochs': 300,  # Increased for better training\n    'learning_rate': 0.01,\n    'patience': 50\n}\n\nprint(\"\u2713 All imports loaded successfully\")\nprint(f\"\u2713 Random seed set to: {RANDOM_SEED}\")\nprint(f\"\u2713 PCA components: {N_PCA_COMPONENTS}\")\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Utility Functions (Unified Metrics & Plotting)**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# =============================================================================\n# UNIFIED METRIC CALCULATION FUNCTION (eliminates duplication across models)\n# =============================================================================\n\ndef calculate_metrics(y_true, y_pred, model_name=\"Model\"):\n    \"\"\"\n    Calculate comprehensive metrics for model evaluation\n\n    Parameters:\n    -----------\n    y_true : array-like\n        Actual values\n    y_pred : array-like\n        Predicted values\n    model_name : str\n        Name of the model for display\n\n    Returns:\n    --------\n    dict : Dictionary containing all metrics\n    \"\"\"\n    # Ensure arrays\n    y_true = np.array(y_true).flatten()\n    y_pred = np.array(y_pred).flatten()\n\n    # Calculate metrics\n    rmse = np.sqrt(mean_squared_error(y_true, y_pred))\n    mae = mean_absolute_error(y_true, y_pred)\n\n    # MAPE with safe division\n    mask = y_true != 0\n    mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100\n    mape = np.clip(mape, 0, 100)  # Clip to reasonable range\n\n    # R-squared\n    r2 = r2_score(y_true, y_pred)\n\n    # Print results\n    print(f\"\\n{'='*60}\")\n    print(f\"{model_name} - Performance Metrics\")\n    print(f\"{'='*60}\")\n    print(f\"RMSE (Root Mean Squared Error): {rmse:.2f} kW\")\n    print(f\"MAE  (Mean Absolute Error):     {mae:.2f} kW\")\n    print(f\"MAPE (Mean Absolute % Error):   {mape:.2f} %\")\n    print(f\"R\u00b2   (R-squared Score):         {r2:.4f}\")\n    print(f\"{'='*60}\")\n\n    return {\n        'RMSE': rmse,\n        'MAE': mae,\n        'MAPE': mape,\n        'R2': r2\n    }\n\n# =============================================================================\n# UNIFIED PLOTTING FUNCTION\n# =============================================================================\n\ndef plot_predictions(y_true, y_pred, model_name=\"Model\", save_path=None):\n    \"\"\"Create comprehensive prediction visualization\"\"\"\n\n    fig, axes = plt.subplots(2, 2, figsize=(15, 10))\n\n    # 1. Actual vs Predicted (Scatter)\n    axes[0, 0].scatter(y_true, y_pred, alpha=0.5)\n    axes[0, 0].plot([y_true.min(), y_true.max()],\n                     [y_true.min(), y_true.max()], 'r--', lw=2)\n    axes[0, 0].set_xlabel('Actual Load (kW)')\n    axes[0, 0].set_ylabel('Predicted Load (kW)')\n    axes[0, 0].set_title(f'{model_name}: Actual vs Predicted')\n    axes[0, 0].grid(True)\n\n    # 2. Time series comparison (first 200 points)\n    n_points = min(200, len(y_true))\n    axes[0, 1].plot(y_true[:n_points], label='Actual', linewidth=2)\n    axes[0, 1].plot(y_pred[:n_points], label='Predicted', linewidth=2, alpha=0.7)\n    axes[0, 1].set_xlabel('Time Index')\n    axes[0, 1].set_ylabel('Load (kW)')\n    axes[0, 1].set_title(f'{model_name}: Time Series Comparison')\n    axes[0, 1].legend()\n    axes[0, 1].grid(True)\n\n    # 3. Residuals\n    residuals = y_true - y_pred\n    axes[1, 0].scatter(range(len(residuals)), residuals, alpha=0.5)\n    axes[1, 0].axhline(y=0, color='r', linestyle='--', linewidth=2)\n    axes[1, 0].set_xlabel('Sample Index')\n    axes[1, 0].set_ylabel('Residual (kW)')\n    axes[1, 0].set_title(f'{model_name}: Residuals Plot')\n    axes[1, 0].grid(True)\n\n    # 4. Residual distribution\n    axes[1, 1].hist(residuals, bins=50, edgecolor='black')\n    axes[1, 1].axvline(x=0, color='r', linestyle='--', linewidth=2)\n    axes[1, 1].set_xlabel('Residual (kW)')\n    axes[1, 1].set_ylabel('Frequency')\n    axes[1, 1].set_title(f'{model_name}: Residual Distribution')\n    axes[1, 1].grid(True)\n\n    plt.tight_layout()\n    if save_path:\n        plt.savefig(save_path, dpi=150, bbox_inches='tight')\n    plt.show()\n\nprint(\"\u2713 Utility functions defined successfully\")\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Load Dataset**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# Load dataset (remove Google Colab dependency)\ntry:\n    from google.colab import files\n    uploaded = files.upload()\n    print(\"\u2713 File uploaded via Google Colab\")\nexcept:\n    print(\"\u2713 Running in local environment - Dataset.csv should be present\")\n\n# Load data\ndf = pd.read_csv('Dataset.csv')\nprint(f\"\\n\u2713 Dataset loaded successfully: {df.shape}\")\nprint(f\"  Rows: {df.shape[0]:,} | Columns: {df.shape[1]}\")\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Data Cleaning**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# =============================================================================\n# DATA CLEANING - Streamlined and optimized\n# =============================================================================\n\nprint(\"=\"*70)\nprint(\"DATA CLEANING PROCESS\")\nprint(\"=\"*70)\n\n# Step 1: Fix DATE column\ndf['DATE'] = df['DATE'].fillna(method='ffill')\nprint(f\"\u2713 Step 1: Fixed DATE column\")\n\n# Step 2: Select relevant columns\ncolumns_to_keep = [\n    'DATE', 'TIME', 'VOLTAGE', 'CURRENT', 'PF',\n    'POWER (KW)', '\"WEEKEND/WEEKDAY\"', 'SEASON',\n    'Temp (F)', 'Humidity (%)'\n]\ndf_clean = df[columns_to_keep].copy()\nprint(f\"\u2713 Step 2: Kept {len(columns_to_keep)} relevant columns\")\n\n# Step 3: Rename columns\ncolumn_mapping = {\n    'DATE': 'date',\n    'TIME': 'time',\n    'VOLTAGE': 'voltage',\n    'CURRENT': 'current',\n    'PF': 'power_factor',\n    'POWER (KW)': 'load_kw',\n    '\"WEEKEND/WEEKDAY\"': 'is_weekend',\n    'SEASON': 'season',\n    'Temp (F)': 'temperature_f',\n    'Humidity (%)': 'humidity'\n}\ndf_clean.rename(columns=column_mapping, inplace=True)\nprint(f\"\u2713 Step 3: Renamed columns for consistency\")\n\n# Step 4: Create datetime index\ndf_clean['time'] = df_clean['time'].str.replace('-', ':')\ndf_clean['datetime'] = pd.to_datetime(\n    df_clean['date'] + ' ' + df_clean['time'],\n    format='%d/%m/%Y %H:%M',\n    errors='coerce'\n)\ndf_clean.set_index('datetime', inplace=True)\ndf_clean.drop(['date', 'time'], axis=1, inplace=True)\nprint(f\"\u2713 Step 4: Created datetime index\")\n\n# Step 5: Handle missing values\ndf_clean = df_clean.fillna(method='ffill').fillna(method='bfill')\nprint(f\"\u2713 Step 5: Handled missing values\")\n\n# Step 6: Convert is_weekend to binary\ndf_clean['is_weekend'] = df_clean['is_weekend'].apply(\n    lambda x: 1 if str(x).strip().upper() == 'WEEKEND' else 0\n)\nprint(f\"\u2713 Step 6: Converted is_weekend to binary (0/1)\")\n\nprint(f\"\\n\u2713 CLEANING COMPLETE\")\nprint(f\"  Final shape: {df_clean.shape}\")\nprint(f\"  Date range: {df_clean.index.min()} to {df_clean.index.max()}\")\nprint(f\"  Total hours: {len(df_clean)}\")\n\n# Cache cleaned data in memory (eliminates repeated file loading)\nCLEANED_DATA = df_clean.copy()\n\n# Save for backup\ndf_clean.to_csv('cleaned_electric_load_data.csv')\nprint(f\"\\n\u2713 Saved: cleaned_electric_load_data.csv\")\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## **Feature Engineering (with PCA Optimization)**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# =============================================================================\n# FEATURE ENGINEERING - Enhanced with PCA, Cyclical Encoding, One-Hot Encoding\n# =============================================================================\n\nprint(\"=\"*70)\nprint(\"FEATURE ENGINEERING PROCESS\")\nprint(\"=\"*70)\n\n# Start with cleaned data from memory (no file reload needed!)\ndf_features = CLEANED_DATA.copy()\n\n# Extract datetime features\ndf_features['hour'] = df_features.index.hour\ndf_features['day_of_week'] = df_features.index.dayofweek\ndf_features['month'] = df_features.index.month\n\nprint(f\"\u2713 Extracted basic datetime features\")\n\n# -----------------------------------------------\n# LAG FEATURES\n# -----------------------------------------------\ndf_features['load_lag_1h'] = df_features['load_kw'].shift(1)\ndf_features['load_lag_24h'] = df_features['load_kw'].shift(24)\ndf_features['load_lag_168h'] = df_features['load_kw'].shift(168)\nprint(f\"\u2713 Created lag features (1h, 24h, 168h)\")\n\n# -----------------------------------------------\n# ROLLING STATISTICS\n# -----------------------------------------------\ndf_features['load_rolling_mean_3h'] = df_features['load_kw'].rolling(window=3, min_periods=1).mean()\ndf_features['load_rolling_mean_6h'] = df_features['load_kw'].rolling(window=6, min_periods=1).mean()\ndf_features['load_rolling_mean_24h'] = df_features['load_kw'].rolling(window=24, min_periods=1).mean()\ndf_features['load_rolling_std_24h'] = df_features['load_kw'].rolling(window=24, min_periods=1).std()\nprint(f\"\u2713 Created rolling statistics features\")\n\n# -----------------------------------------------\n# CYCLICAL ENCODING (NEW! - Better hour representation)\n# -----------------------------------------------\ndf_features['hour_sin'] = np.sin(2 * np.pi * df_features['hour'] / 24)\ndf_features['hour_cos'] = np.cos(2 * np.pi * df_features['hour'] / 24)\ndf_features['day_of_week_sin'] = np.sin(2 * np.pi * df_features['day_of_week'] / 7)\ndf_features['day_of_week_cos'] = np.cos(2 * np.pi * df_features['day_of_week'] / 7)\ndf_features['month_sin'] = np.sin(2 * np.pi * df_features['month'] / 12)\ndf_features['month_cos'] = np.cos(2 * np.pi * df_features['month'] / 12)\nprint(f\"\u2713 Created cyclical encoding (sin/cos) for temporal features\")\n\n# -----------------------------------------------\n# TEMPORAL INDICATORS\n# -----------------------------------------------\ndf_features['is_peak_morning'] = ((df_features['hour'] >= 7) & (df_features['hour'] <= 9)).astype(int)\ndf_features['is_peak_evening'] = ((df_features['hour'] >= 18) & (df_features['hour'] <= 21)).astype(int)\ndf_features['is_peak_hour'] = (df_features['is_peak_morning'] | df_features['is_peak_evening']).astype(int)\ndf_features['is_night'] = ((df_features['hour'] >= 0) & (df_features['hour'] <= 5)).astype(int)\ndf_features['is_working_hours'] = ((df_features['hour'] >= 9) & (df_features['hour'] <= 17)).astype(int)\ndf_features['weekend_hour'] = df_features['is_weekend'] * df_features['hour']\nprint(f\"\u2713 Created temporal indicator features\")\n\n# -----------------------------------------------\n# WEATHER INTERACTIONS\n# -----------------------------------------------\ndf_features['temp_humidity_index'] = df_features['temperature_f'] * (df_features['humidity'] / 100)\ndf_features['temp_deviation'] = df_features['temperature_f'] - df_features['temperature_f'].mean()\ndf_features['season_temp'] = df_features['season'] * df_features['temperature_f']\nprint(f\"\u2713 Created weather interaction features\")\n\n# -----------------------------------------------\n# ONE-HOT ENCODING FOR SEASON (NEW! - Better categorical handling)\n# -----------------------------------------------\nseason_dummies = pd.get_dummies(df_features['season'], prefix='season')\ndf_features = pd.concat([df_features, season_dummies], axis=1)\nprint(f\"\u2713 Created one-hot encoding for season\")\n\n# Remove rows with NaN (from lag features)\ndf_features = df_features.dropna()\nprint(f\"\\n\u2713 Removed NaN rows: {len(df_features)} samples remaining\")\n\n# -----------------------------------------------\n# PREPARE FEATURES AND TARGET\n# -----------------------------------------------\n# Target variable\ny = df_features['load_kw'].values\n\n# Feature columns (before PCA)\nfeature_cols = [col for col in df_features.columns if col != 'load_kw']\nX_original = df_features[feature_cols].values\n\nprint(f\"\\n\u2713 Original feature set: {X_original.shape[1]} features\")\nprint(f\"  Total samples: {X_original.shape[0]}\")\n\n# -----------------------------------------------\n# TRAIN-VAL-TEST SPLIT (Temporal)\n# -----------------------------------------------\nn_total = len(X_original)\nn_train = int(n_total * TRAIN_RATIO)\nn_val = int(n_total * VAL_RATIO)\n\nX_train_orig = X_original[:n_train]\nX_val_orig = X_original[n_train:n_train+n_val]\nX_test_orig = X_original[n_train+n_val:]\n\ny_train = y[:n_train]\ny_val = y[n_train:n_train+n_val]\ny_test = y[n_train+n_val:]\n\nprint(f\"\\n\u2713 Data split:\")\nprint(f\"  Train: {len(X_train_orig)} samples ({TRAIN_RATIO*100:.0f}%)\")\nprint(f\"  Val:   {len(X_val_orig)} samples ({VAL_RATIO*100:.0f}%)\")\nprint(f\"  Test:  {len(X_test_orig)} samples ({TEST_RATIO*100:.0f}%)\")\n\n# -----------------------------------------------\n# FEATURE SCALING (fit on train, apply to all)\n# -----------------------------------------------\nscaler_X = StandardScaler()\nX_train_scaled = scaler_X.fit_transform(X_train_orig)\nX_val_scaled = scaler_X.transform(X_val_orig)\nX_test_scaled = scaler_X.transform(X_test_orig)\n\nscaler_y = StandardScaler()\ny_train_scaled = scaler_y.fit_transform(y_train.reshape(-1, 1)).ravel()\ny_val_scaled = scaler_y.transform(y_val.reshape(-1, 1)).ravel()\ny_test_scaled = scaler_y.transform(y_test.reshape(-1, 1)).ravel()\n\nprint(f\"\\n\u2713 Feature scaling completed (StandardScaler)\")\n\n# -----------------------------------------------\n# PCA DIMENSIONALITY REDUCTION (KEY OPTIMIZATION!)\n# -----------------------------------------------\nprint(f\"\\n{'='*70}\")\nprint(f\"PCA DIMENSIONALITY REDUCTION\")\nprint(f\"{'='*70}\")\n\npca = PCA(n_components=N_PCA_COMPONENTS, random_state=RANDOM_SEED)\nX_train_pca = pca.fit_transform(X_train_scaled)\nX_val_pca = pca.transform(X_val_scaled)\nX_test_pca = pca.transform(X_test_scaled)\n\nexplained_variance = pca.explained_variance_ratio_\ncumulative_variance = np.cumsum(explained_variance)\n\nprint(f\"\u2713 PCA reduced features: {X_original.shape[1]} \u2192 {N_PCA_COMPONENTS}\")\nprint(f\"\u2713 Total variance explained: {cumulative_variance[-1]*100:.2f}%\")\nprint(f\"\\nVariance by component:\")\nfor i, (var, cum_var) in enumerate(zip(explained_variance[:5], cumulative_variance[:5])):\n    print(f\"  PC{i+1}: {var*100:.2f}% (cumulative: {cum_var*100:.2f}%)\")\nprint(f\"  ...\")\n\n# -----------------------------------------------\n# SAVE PROCESSED DATA\n# -----------------------------------------------\n# Save PCA-transformed data (for MLP and ANFIS)\nnp.save('X_train_pca.npy', X_train_pca)\nnp.save('X_val_pca.npy', X_val_pca)\nnp.save('X_test_pca.npy', X_test_pca)\n\nnp.save('y_train.npy', y_train)\nnp.save('y_val.npy', y_val)\nnp.save('y_test.npy', y_test)\n\nnp.save('y_train_scaled.npy', y_train_scaled)\nnp.save('y_val_scaled.npy', y_val_scaled)\nnp.save('y_test_scaled.npy', y_test_scaled)\n\n# Save original scaled features (for ARIMA if needed)\nnp.save('X_train_scaled.npy', X_train_scaled)\nnp.save('X_val_scaled.npy', X_val_scaled)\nnp.save('X_test_scaled.npy', X_test_scaled)\n\n# Save scalers and PCA\nwith open('scaler_X.pkl', 'wb') as f:\n    pickle.dump(scaler_X, f)\nwith open('scaler_y.pkl', 'wb') as f:\n    pickle.dump(scaler_y, f)\nwith open('pca_model.pkl', 'wb') as f:\n    pickle.dump(pca, f)\n\nprint(f\"\\n\u2713 All processed data saved successfully\")\nprint(f\"\\n{'='*70}\")\nprint(f\"FEATURE ENGINEERING COMPLETE\")\nprint(f\"{'='*70}\")\nprint(f\"\u2713 Ready for model training with {N_PCA_COMPONENTS} PCA features\")\nprint(f\"\u2713 This will dramatically speed up ANFIS training!\")\nprint(f\"  (Rules reduced from 3^{X_original.shape[1]} to 3^{N_PCA_COMPONENTS})\")\n"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.8.0"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
